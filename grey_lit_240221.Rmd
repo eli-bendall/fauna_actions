@@ -1,0 +1,1363 @@
+---
+title: "grey_lit_analysis"
+author: "E. Bendall"
+date: "24/02/2021"
+output: word_document
+---
+
+Markdown runs in chunks, makes it easier to compartmentalise operations and structure script. Knitting the document with knitr outputs word document
+
+```{r setup, include=TRUE, message=FALSE}
+
+
+library(here)
+library(dplyr)
+library(ggplot2)
+library(stringr)
+library(tidyr)
+library(RColorBrewer)
+library(readxl)
+library(ggpubr)
+library(egg)
+
+# Make sure the scales package is available (it should be if ggplot is installed)
+requireNamespace("scales")
+
+# Default graph theme - white background
+theme_set( theme_bw() )
+
+set.seed(42)
+
+# Save a graph to a PDF file
+gg_pdf <- function(plot, filename, size = pagesize("A4", "landscape", "cm")) {
+  
+  if (!inherits(size, "pagesize")) stop("The size argument should be a pagesize (list) object")
+  
+  ggsave(
+    filename, 
+    plot, 
+    width = size$width,
+    height = size$height,
+    units = size$units)
+}
+
+```
+
+Load data
+
+```{r}
+
+## read in data
+
+ExcelPathData <- here("review_data_240221.xlsx")
+
+```
+
+
+call column names
+
+```{r}
+
+DAT.grey <- read_excel(ExcelPathData, sheet = "grey_lit", guess_max = 400)
+
+colnames(DAT.grey)
+
+```
+
+select variables of interest
+
+```{r}
+
+DAT.grey <- DAT.grey %>%
+  dplyr::select(year_published,
+         state,
+         article_type,
+         authors,
+         sample_size,
+         specific_action,
+         bird1:any_hab14,        
+         timing = action_timing,
+         fauna_type,
+         fire_type,
+         veg = veg_community,
+         purpose,
+         accept,
+         case_study,
+         title, 
+         primary_issue_addressed,
+         summary,
+         bird1:any_hab14) %>%
+
+## filter to accepted articles  
+  filter(accept == "y") %>%
+  filter(!is.na(accept)) %>%
+  dplyr::select(-(accept)) %>%
+  tibble::rowid_to_column("ID")
+
+```
+
+Check for missing values
+
+```{r}
+
+colSums( is.na(DAT.grey) )
+
+```
+
+
+view fire type levels
+
+```{r}
+DAT.grey %>%
+  dplyr::select(fire_type) %>%
+  distinct()
+  
+```
+
+recode fire type
+
+```{r}
+DAT.grey.temp <- DAT.grey %>%
+      mutate(
+    fire_cat = case_when(fire_type == "Planned fire" ~ "planned",
+                         fire_type == "Wildfire" ~ "wild",
+                         fire_type == "Both wildfire and planned fire" ~ "not specified",
+                         fire_type == "Any" ~ "not specified",
+                         fire_type == "All" ~ "not specified")) %>%
+    filter(!is.na(fire_cat)) %>%
+  dplyr::select(-(fire_type))
+
+```
+
+view timing levels
+
+```{r}
+DAT.grey.temp %>%
+  dplyr::select(timing) %>%
+  distinct()
+  
+
+```
+
+recode timing levels
+
+```{r}
+DAT.grey.temp2 <- DAT.grey.temp %>%
+  filter(!is.na(timing)) %>%
+      mutate(
+    timing_cat = case_when(timing == "Pre-fire" ~ "pre",
+                         timing == "Post-fire" ~ "post",
+                         timing == "Both pre and post fire" ~ "pre_post",
+                         timing == "During fire" ~ "during",
+                         timing == "Any" ~ "not specified")) %>%
+  dplyr::select(-(timing))
+```
+
+
+view purpose levels
+
+```{r}
+DAT.grey.temp2 %>%
+  dplyr::select(purpose) %>%
+  distinct()
+  
+
+```
+
+recode purpose variable
+
+```{r}
+DAT.grey.temp4 <- DAT.grey.temp2 %>%
+      mutate(
+    purpose_cat = case_when(purpose == "description of actions that are likely to impact fauna" ~ "description of potential action",
+                        purpose == "proposal of potential actions" ~ "description of potential action",
+                         purpose == "description of adopted actions and their implementation" ~ "adopted action & implementation",
+                         purpose == "description/implementation/monitoring" ~ "adoption/implementation/monitoring",
+                         purpose == "reporting of action effectiveness" ~ "reporting of action effectiveness")) %>%
+    dplyr::select(-(purpose))
+```
+
+
+
+Assign factors. This is now the main dataframe
+
+```{r}
+DAT.grey.clean <- DAT.grey.temp4 %>%
+  mutate_all(as.factor)
+  
+```
+
+
+Plot 1. Document purpose
+
+```{r}
+## setup graph for purpose data
+
+DAT.grey.gg1 <- DAT.grey.clean %>%
+  dplyr::select(purpose_cat, article_type) %>%
+  dplyr::count(purpose_cat, article_type) %>%
+  arrange(desc(n))
+
+DAT.grey.gg1$purpose_cat = factor(DAT.grey.gg1$purpose_cat, levels = rev(unique(DAT.grey.gg1$purpose_cat)))
+
+```
+
+
+```{r}
+## setup article data 
+DAT.grey.gg1 %>%
+  dplyr::select(article_type) %>%
+  distinct()
+  
+```
+
+```{r}
+## recode variable
+DAT.grey.gg1 <- DAT.grey.gg1 %>%
+      mutate(
+    article_cat = case_when(article_type == "website article" ~ "website article",
+                            article_type == "technical report" ~ "technical report",
+                            article_type == "consultant's report" ~ "consultant report",
+                            article_type == "response to inquiry" ~ "inquiry response",
+                            article_type == "senate/committee report" ~ "senate or committee report",
+                            article_type == "handbook/manual/plan/policy" ~ "manual/plan/policy")) %>%
+  dplyr::select(-(article_type))
+```
+
+```{r}
+## more recoding and ordering facets for plot
+DAT.grey.gg1 <- DAT.grey.gg1 %>%
+ arrange(n) %>%
+ mutate(purpose_cat = factor(purpose_cat, levels=c("description of potential action", "adopted action & implementation", "adoption/implementation/monitoring", "reporting of action effectiveness"),
+                                          labels=c("Description of\npotential action", "Adopted action\n& implementation", "Adoption/implementation/\nmonitoring", "Reporting of\naction effectiveness"))) %>%
+  
+  
+   mutate(article_cat = factor(article_cat, levels=c("manual/plan/policy", "technical report", "consultant report", "senate or committee report", "inquiry response", "website article")))
+  
+```
+
+
+First section is uysed for plot tweaking
+
+```{r fig.height = 2.5, fig.width = 2.5}
+
+## custom theme
+My_Theme = theme(
+  plot.title = element_text(size = 13, face = "bold", hjust = 0.5),
+  axis.title.y = element_text(size = 12, face = "bold"),
+  axis.text.y = element_text(size = 11.5, margin = unit(c(0.1, 0.1, 0.1, 0.2), "cm")),
+  axis.text.x = element_text(size = 11.5, vjust = 0.9, hjust = 1, margin = unit(c(0.15, 0.1, 0.1, 0.1), "cm"), angle = 45),
+  axis.title.x = element_text(size = 13, face = "bold", vjust = -0.6),
+  strip.text.x = element_text(size = 12),
+  strip.text.y = element_text(size = 11),
+  strip.text = element_text(size = 12),
+  strip.background = element_blank(),
+  panel.background = element_blank(),
+  strip.placement = "inside",
+  axis.ticks.length = unit(-0.07, "cm"),
+  axis.ticks = element_line(size = 0.8),
+  panel.grid.minor.x = element_blank(),
+  panel.grid.major.x = element_blank(),
+  panel.grid.minor.y = element_blank(),
+  panel.grid.major.y = element_blank(),
+  legend.position = c(0.8, 0.7),
+  legend.title = element_text(size = 12, hjust = 0.5, face = "bold"),
+  legend.text = element_text(size = 9),
+  legend.key.width = unit(0.3, "cm"),
+  legend.key.height = unit(0.5, "cm"),
+  legend.background = element_blank(),
+  plot.margin = unit(c(5, 5, 5, 5), "pt"))
+
+plot.1 <- ggplot(data = DAT.grey.gg1, aes(x = purpose_cat, group = n, fill = purpose_cat)) +
+  
+  My_Theme +
+  
+  geom_col(aes(y = n, fill = article_cat),
+             position = "stack",  alpha = 1) +
+
+  scale_fill_brewer(palette = "Spectral", direction = -1) +
+  
+  labs(x = "Purpose of document", y = "n articles", title = "Purpose of document", fill = "Article type") 
+
+
+plot.1
+
+```
+
+Second section is used for saving
+
+```{r fig.height = 2.5, fig.width = 2.5}
+library(egg)
+purpose.fig <- egg::ggarrange(plot.1,  ncol = 1, nrow = 1, heights = c(2)) 
+
+ggsave("purpose.fig.grey.png")
+
+
+purpose.fig
+
+```
+
+#### This section deals with the huge number of columns we assigned for fauna and ecosystems to deal with the issue of documents that described multiple actions for different fauna and ecosystems
+
+```{r}
+
+## method to gather the different columns of fauna types, veg types and actions while duplicating the rows for the other variables
+
+DAT.grey.x <- DAT.grey.clean %>%
+  
+  dplyr::select(                                                                                              
+        bird1,
+        bird2,
+        bird3,
+        bird4,
+        bird5,
+        bird6,
+        bird7,
+        bird8,
+        bird9,
+        bird10,
+        bird11,
+        bird12,
+        bird13,
+        bird14,
+        mammal1,
+        mammal2,
+        mammal3,
+        mammal4,
+        mammal5,
+        mammal6,
+        mammal7,
+        mammal8,
+        mammal9,
+        mammal10,
+        mammal11,
+        mammal12,
+        mammal13,
+        mammal14,
+        herp1,
+        herp2,
+        herp3,
+        herp4,
+        herp5,
+        herp6,
+        herp7,
+        herp8,
+        herp9,
+        herp10,
+        herp11,
+        herp12,
+        herp13,
+        herp14,
+        fish1,
+        fish2,
+        fish3,
+        fish4,
+        fish5,
+        fish6,
+        fish7,
+        fish8,
+        fish9,
+        fish10,
+        fish11,
+        fish12,
+        fish13,
+        fish14,
+        invert1,
+        invert2,
+        invert3,
+        invert4,
+        invert5,
+        invert6,
+        invert7,
+        invert8,
+        invert9,
+        invert10,
+        invert11,
+        invert12,
+        invert13,
+        invert14,
+        any1,
+        any2,
+        any3,
+        any4,
+        any5,
+        any6,
+        any7,
+        any8,
+        any9,
+        any10,
+        any11,
+        any12,
+        any13,
+        any14,
+          timing_cat,
+          ID,
+          state,
+          specific_action) %>%
+  
+  gather(key = "fauna_cat", value = "action_cat", 
+        bird1:any14) %>%
+  filter(!is.na(action_cat)) %>%
+  mutate(newID = row_number())
+
+DAT.grey.y <- DAT.grey.clean %>%
+  dplyr::select(
+        bird_hab1,
+        bird_hab2,
+        bird_hab3,
+        bird_hab4,
+        bird_hab5,
+        bird_hab6,
+        bird_hab7,
+        bird_hab8,
+        bird_hab9,
+        bird_hab10,
+        bird_hab11,
+        bird_hab12,
+        bird_hab13,
+        bird_hab14,
+        mammal_hab1,
+        mammal_hab2,
+        mammal_hab3,
+        mammal_hab4,
+        mammal_hab5,
+        mammal_hab6,
+        mammal_hab7,
+        mammal_hab8,
+        mammal_hab9,
+        mammal_hab10,
+        mammal_hab11,
+        mammal_hab12,
+        mammal_hab13,
+        mammal_hab14,
+        herp_hab1,
+        herp_hab2,
+        herp_hab3,
+        herp_hab4,
+        herp_hab5,
+        herp_hab6,
+        herp_hab7,
+        herp_hab8,
+        herp_hab9,
+        herp_hab10,
+        herp_hab11,
+        herp_hab12,
+        herp_hab13,
+        herp_hab14,
+        fish_hab1,
+        fish_hab2,
+        fish_hab3,
+        fish_hab4,
+        fish_hab5,
+        fish_hab6,
+        fish_hab7,
+        fish_hab8,
+        fish_hab9,
+        fish_hab10,
+        fish_hab11,
+        fish_hab12,
+        fish_hab13,
+        fish_hab14,
+        invert_hab1,
+        invert_hab2,
+        invert_hab3,
+        invert_hab4,
+        invert_hab5,
+        invert_hab6,
+        invert_hab7,
+        invert_hab8,
+        invert_hab9,
+        invert_hab10,
+        invert_hab11,
+        invert_hab12,
+        invert_hab13,
+        invert_hab14,
+        any_hab1,
+        any_hab2,
+        any_hab3,
+        any_hab4,
+        any_hab5,
+        any_hab6,
+        any_hab7,
+        any_hab8,
+        any_hab9,
+        any_hab10,
+        any_hab11,
+        any_hab12,
+        any_hab13,
+        any_hab14,
+          timing_cat,
+          ID,
+          state,
+          specific_action) %>%
+  gather(key = "veg_source", value = "veg_cat", 
+          bird_hab1:any_hab14) %>%
+  filter(!is.na(veg_cat)) %>%
+  dplyr::select(ID, veg_cat) %>%
+  mutate(newID = row_number())
+
+
+DAT.grey.z <- merge(DAT.grey.x, DAT.grey.y, by = "newID", all.x = TRUE)
+
+```
+We now have 325 rows rather than 68
+
+
+
+### NOTE: 'DAT.grey.z' is now the main dataframe
+
+There is a problem that fauna and corresponding ecosystems have a number at end of the string left over from the spreadsheet. Here we get rid of that number
+
+```{r}
+## remove numbers from fauna string
+library(tm)
+DAT.grey.z$fauna_cat <- removeNumbers(DAT.grey.z$fauna_cat)
+
+```
+
+
+Frequency table of specific actions for appendix
+
+```{r}
+
+DAT.grey.spec1 <- DAT.grey.z %>%
+  group_by(specific_action, fauna_cat, veg_cat) %>%
+  ungroup()
+
+write.csv(DAT.grey.spec1, file = "specific_action_grey_grouped_list.csv")
+
+
+DAT.grey.spec2 <- DAT.grey.z %>%
+  dplyr::select(specific_action) %>%
+  distinct(specific_action)
+
+write.csv(DAT.grey.spec2, file = "specific_action_grey_list.csv")
+
+```
+
+view levels of action cat
+
+```{r}
+DAT.grey.z %>%
+  distinct(action_cat)
+```
+
+```{r}
+## recode action variable
+DAT.grey.z <- DAT.grey.z %>%
+    mutate(action_cat = factor(action_cat, levels = c("Admin/funding", "Habitat creation", "Predator/competitor control", "Mitigating harm from fire control", "Monitoring/research/consultation/education", "Post-fire control rehabilitation", "Animal rescue", "Supplementary resources", "Logging/land clearing", "Preventing pollution", "Ecological grazing", "Restricting public access", "Soil management", "Preventing poaching", "Fire control activities"),
+                               labels = c("Admin/funding", "Habitat creation", "Predator/competitor control", "Mitigating harm from fire", "Monitoring/research/consultation/education", "Post-fire env. rehab", "Animal rescue", "Supplementary resources", "Logging/land clearing", "Prevent pollution", "Ecological grazing", "Restrict public access", "Soil management", "Prevent poaching", "Fire control activities")))
+
+```
+
+
+
+View levels
+
+```{r}
+DAT.grey.z %>%
+  distinct(veg_cat)
+```
+
+Recode veg variables
+```{r}
+DAT.grey.z <- DAT.grey.z %>%
+    mutate(veg_cat = factor(veg_cat, levels = c("STE",                         "Forest", "Woodland", "Foreshore", "Alpine", "Heath", "Rainforest", "Hanging Swamp", "Aquatic", "Any",              "Grassland", "Semi-arid", "Wetland"),
+                                     labels = c("Most temperate\necosystems", "Forest", "Woodland", "Foreshore", "Alpine", "Heath", "Rainforest", "Aquatic",       "Aquatic", "Not specified",  "Grassland", "Semi-arid", "Aquatic")))
+```
+
+
+Plot 2. Action timing
+
+```{r}
+## set up fauna vs timing graph
+DAT.grey.gg2 <- DAT.grey.z %>%
+  dplyr::select(timing_cat, fauna_cat, veg_cat) %>%
+  count(fauna_cat, timing_cat, veg_cat)
+
+DAT.grey.gg2 <- DAT.grey.gg2 %>%
+  arrange(desc(n)) 
+  
+DAT.grey.gg2$fauna_cat = factor(DAT.grey.gg2$fauna_cat, levels = rev(unique(DAT.grey.gg2$fauna_cat)))
+
+DAT.grey.gg2$timing_cat = factor(DAT.grey.gg2$timing_cat, levels = rev(unique(DAT.grey.gg2$timing_cat)))
+
+```
+
+```{r}
+# recode and order faceting variables
+DAT.grey.gg2 <- DAT.grey.gg2 %>%
+ arrange(n) %>%
+   mutate(fauna_cat = factor(fauna_cat, levels=c("any",           "fish", "herp", "mammal", "invert", "bird"),
+                                        labels=c("not specified", "fish", "herpetofauna", "mammal", "invertebrate", "bird"))) %>%
+  mutate(timing_cat = factor(timing_cat, levels=c("during", "pre", "pre_post", "not specified", "post"),
+                                        labels=c("During fire", "Pre-fire", "Pre &\n post-fire", "Not\n specified", "Post-fire"))) 
+
+```
+
+```{r fig.height = 2.5, fig.width = 3.5}
+
+library(ggpubr)
+
+My_Theme = theme(
+  plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+  axis.title.y = element_text(size = 12, face = "bold"),
+  axis.text.y = element_text(size = 10, margin = unit(c(0.1, 0.1, 0.1, 0.2), "cm")),
+  axis.text.x = element_text(size = 10.5, vjust = 0.9, hjust = 0.9, margin = unit(c(0.15, 0.1, 0.1, 0.1), "cm"), angle = 45),
+  axis.title.x = element_text(size = 12, face = "bold", vjust = -0.6),
+  strip.text.x = element_text(size = 9),
+  strip.text.y = element_text(size = 11),
+  strip.text = element_text(size = 11),
+  strip.background = element_blank(),
+  panel.background = element_blank(),
+  strip.placement = "inside",
+  axis.ticks.length = unit(-0.07, "cm"),
+  axis.ticks = element_line(size = 0.8),
+  panel.grid.minor.x = element_blank(),
+  panel.grid.major.x = element_blank(),
+  panel.grid.minor.y = element_blank(),
+  panel.grid.major.y = element_blank(),
+  legend.position = c(0.1, 0.6),
+  legend.title = element_text(size = 9, hjust = 0.6, face = "bold"),
+  legend.text = element_text(size = 9),
+  legend.key.width = unit(0.3, "cm"),
+  legend.key.height = unit(0.5, "cm"),
+  legend.background = element_blank(),
+  plot.margin = unit(c(5, 5, 5, 5), "pt"))
+
+nb.cols <- 12
+mycolors <- colorRampPalette(brewer.pal(12, "Paired"))(nb.cols)
+
+
+plot.2 <- ggplot(data = DAT.grey.gg2, aes(x = fauna_cat, group = n)) +
+  
+  My_Theme +
+  
+  geom_col(aes(y = n, fill = veg_cat),
+             position = "stack") +
+  
+    scale_fill_manual(values = mycolors) +
+  
+  
+  labs(x = "Fauna type", y = "n actions", title = "Action timing", fill = "Vegetation type") +
+  facet_grid(~timing_cat, space = "free", scales = "free")
+
+
+plot.2
+
+```
+
+```{r fig.height = 2.5, fig.width = 3.5}
+
+timing.fig <- egg::ggarrange(plot.2,  ncol = 1, nrow = 1, heights = c(2)) 
+
+ggsave("timing.grey.png")
+
+
+timing.fig
+
+```
+
+
+```{r}
+## frequency tables for graph with timing, veg, fauna, fire
+
+DAT.grey.z <- DAT.grey.z %>%
+      mutate(timing_cat = factor(timing_cat, levels=c("during", "pre", "pre_post", "not specified", "post"),
+                                             labels=c("during", "pre", "pre_post", "any", "post")))
+
+DAT.timing <- DAT.grey.z %>%
+  dplyr::select(veg_cat, timing_cat) %>%
+group_by(veg_cat, timing_cat) %>%
+  summarise(n = n()) %>%
+  spread(timing_cat, n) %>%
+  tidyr::complete(fill = list(unknown = 0)) %>%
+  tidyr::complete(fill = list(any = 0)) %>%
+  tidyr::complete(fill = list(during = 0)) %>%
+  tidyr::complete(fill = list(pre_post = 0)) %>%
+  tidyr::complete(fill = list(pre = 0)) %>%
+  tidyr::complete(fill = list(post = 0)) %>%
+  ungroup()
+
+DAT.timing.pct <- DAT.timing %>%
+    group_by(veg_cat, any, during, pre_post, pre, post) %>%
+    summarise(n = sum(any, during, pre_post, pre, post)) %>%
+    ungroup() %>%
+    mutate(Any = (any / n) *100) %>%
+    mutate(During = (during / n) *100) %>%
+    mutate(Pre_post = (pre_post / n) *100) %>%
+    mutate(Pre = (pre / n) *100) %>%
+    mutate(Post = (post / n) *100) %>%
+    dplyr::select(-any, -during, -pre_post, -pre, -post) %>%
+    gather(Timing, Proportion, -veg_cat, -n)
+
+
+
+DAT.timing.pct$Proportion <- round(DAT.timing.pct$Proportion, digits = 1)
+
+DAT.timing2 <- DAT.grey.z %>%
+  dplyr::select(timing_cat) %>%
+group_by(timing_cat) %>%
+  summarise(n = n()) %>%
+  spread(timing_cat, n) %>%
+  tidyr::complete(fill = list(any = 0)) %>%
+  tidyr::complete(fill = list(during = 0)) %>%
+  tidyr::complete(fill = list(pre_post = 0)) %>%
+  tidyr::complete(fill = list(pre = 0)) %>%
+  tidyr::complete(fill = list(post = 0)) %>%
+  ungroup()
+
+DAT.timing2.pct <- DAT.timing2 %>%
+    group_by(any, during, pre_post, pre, post) %>%
+    summarise(n = sum(any, during, pre_post, pre, post)) %>%
+    ungroup() %>%
+    mutate(Any = (any / n) *100) %>%
+    mutate(During = (during / n) *100) %>%
+    mutate(Pre_post = (pre_post / n) *100) %>%
+    mutate(Pre = (pre / n) *100) %>%
+    mutate(Post = (post / n) *100) %>%
+    dplyr::select(-any, -during, -pre_post, -pre, -post) %>%
+    gather(Timing, Proportion, -n)
+
+```
+
+
+### Individual taxa plots
+
+1. Birds
+
+```{r}
+
+DAT.grey.bird <- DAT.grey.z %>%
+  filter(fauna_cat == "bird") %>%
+  dplyr::select(action_cat, veg_cat) %>%
+  count(action_cat, veg_cat)
+
+DAT.grey.bird <- DAT.grey.bird %>%
+  arrange(desc(n)) 
+  
+DAT.grey.bird %>%
+  distinct(action_cat, veg_cat)
+```  
+
+
+```{r}
+## Recode and order 
+DAT.grey.bird <- DAT.grey.bird %>%
+  
+  mutate(action_cat = factor(action_cat, levels = c("Admin/funding", "Habitat creation", "Predator/competitor control", "Mitigating harm from fire", "Monitoring/research/consultation/education", "Fire control activities", "Animal rescue", "Supplementary resources", "Logging/land clearing", "Post-fire env. rehab", "Ecological grazing", "Prevent pollution"))) %>%
+
+  mutate(veg_cat = factor(veg_cat, levels = c("Alpine", "Aquatic", "Rainforest", "Foreshore", "Heath", "Woodland", "Forest", "Most temperate\necosystems")))
+  
+
+DAT.grey.bird$action_cat = factor(DAT.grey.bird$action_cat, levels = rev(unique(DAT.grey.bird$action_cat)))
+
+DAT.grey.bird
+```
+
+
+
+
+```{r fig.height = 3, fig.width = 2.5}
+
+My_Theme = theme(
+  plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+  axis.title.y = element_text(size = 12, face = "bold"),
+  axis.text.y = element_text(size = 10, margin = unit(c(0.1, 0.1, 0.1, 0.2), "cm")),
+  axis.text.x = element_text(size = 10.5, vjust = 1, hjust = 1, margin = unit(c(0.15, 0.1, 0.1, 0.1), "cm"), angle = 55),
+  axis.title.x = element_text(size = 12, face = "bold", vjust = -0.6),
+  strip.text.x = element_text(size = 7),
+  strip.text.y = element_text(size = 11),
+  strip.text = element_text(size = 11),
+  strip.background = element_blank(),
+  panel.background = element_blank(),
+  strip.placement = "inside",
+  axis.ticks.length = unit(-0.07, "cm"),
+  axis.ticks = element_line(size = 0.8),
+  panel.grid.minor.x = element_blank(),
+  panel.grid.major.x = element_blank(),
+  panel.grid.minor.y = element_blank(),
+  panel.grid.major.y = element_blank(),
+  legend.position = c(0.15, 0.65),
+  legend.title = element_text(size = 9, hjust = 0.6, face = "bold"),
+  legend.text = element_text(size = 9),
+  legend.key.width = unit(0.3, "cm"),
+  legend.key.height = unit(0.5, "cm"),
+  legend.background = element_blank(),
+  plot.margin = unit(c(5, 5, 5, 5), "pt"))
+
+bird.plot <- ggplot(data = DAT.grey.bird, aes(x = action_cat, fill = action_cat)) +
+  
+  My_Theme +
+  
+  geom_col(aes(y = n, fill = veg_cat),
+             position = "stack") +
+  
+    scale_fill_brewer(palette = "Spectral") +
+  
+  
+   scale_y_continuous(breaks = seq(0, 10, by = 2)) +
+  
+  coord_cartesian(ylim = c(0,10)) +
+  
+  labs(x = "Action type", y = "n mentions", title = "Birds", fill = "Ecosystem type")# +
+
+
+
+bird.plot
+
+```
+
+
+
+```{r fig.height = 3, fig.width = 2.25}
+
+bird.fig <- egg::ggarrange(bird.plot,  ncol = 1, nrow = 1, heights = c(2)) 
+
+ggsave("bird.grey.png")
+
+
+bird.fig
+
+```
+
+
+
+2. Mammals
+
+```{r}
+
+DAT.grey.mammal <- DAT.grey.z %>%
+  filter(fauna_cat == "mammal") %>%
+  dplyr::select(action_cat, veg_cat) %>%
+  count(action_cat, veg_cat)
+
+
+  
+DAT.grey.mammal %>%
+  distinct(action_cat, veg_cat)
+```  
+
+
+```{r}
+
+DAT.grey.mammal <- DAT.grey.mammal %>%
+  
+      arrange(desc(n)) %>%
+  
+  mutate(action_cat = factor(action_cat, levels = c("Admin/funding", "Habitat creation", "Predator/competitor control", "Mitigating harm from fire", "Monitoring/research/consultation/education", "Fire control activities", "Animal rescue", "Supplementary resources", "Logging/land clearing", "Post-fire env. rehab", "Ecological grazing", "Prevent pollution", "Restrict public access"))) %>%
+
+  mutate(veg_cat = factor(veg_cat, levels = c("Rainforest",  "Heath", "Aquatic", "Alpine", "Foreshore", "Most temperate\necosystems", "Woodland", "Forest")))
+
+DAT.grey.mammal$action_cat = factor(DAT.grey.mammal$action_cat, levels = rev(unique(DAT.grey.mammal$action_cat)))
+
+
+
+DAT.grey.mammal
+```
+
+
+```{r fig.height = 3, fig.width = 2.65}
+
+My_Theme = theme(
+  plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+  axis.title.y = element_text(size = 12, face = "bold"),
+  axis.text.y = element_text(size = 10, margin = unit(c(0.1, 0.1, 0.1, 0.2), "cm")),
+  axis.text.x = element_text(size = 10.5, vjust = 1, hjust = 1, margin = unit(c(0.15, 0.1, 0.1, 0.1), "cm"), angle = 55),
+  axis.title.x = element_text(size = 12, face = "bold", vjust = -0.6),
+  strip.text.x = element_text(size = 7),
+  strip.text.y = element_text(size = 11),
+  strip.text = element_text(size = 11),
+  strip.background = element_blank(),
+  panel.background = element_blank(),
+  strip.placement = "inside",
+  axis.ticks.length = unit(-0.07, "cm"),
+  axis.ticks = element_line(size = 0.8),
+  panel.grid.minor.x = element_blank(),
+  panel.grid.major.x = element_blank(),
+  panel.grid.minor.y = element_blank(),
+  panel.grid.major.y = element_blank(),
+  legend.position = c(0.15, 0.7),
+  legend.title = element_text(size = 9, hjust = 0.6, face = "bold"),
+  legend.text = element_text(size = 9),
+  legend.key.width = unit(0.3, "cm"),
+  legend.key.height = unit(0.5, "cm"),
+  legend.background = element_blank(),
+  plot.margin = unit(c(5, 5, 5, 5), "pt"))
+
+mammal.plot <- ggplot(data = DAT.grey.mammal, aes(x = action_cat, fill = action_cat)) +
+  
+  My_Theme +
+  
+  geom_col(aes(y = n, fill = veg_cat),
+             position = "stack") +
+  
+    scale_fill_brewer(palette = "Spectral") +
+  
+  
+   scale_y_continuous(breaks = seq(0, 18, by = 2)) +
+  
+  coord_cartesian(ylim = c(0,18)) +
+  
+  labs(x = "Action type", y = "n mentions", title = "Mammals", fill = "Ecosystem type")# +
+
+
+
+mammal.plot
+
+```
+
+
+
+```{r fig.height = 3, fig.width = 2.75}
+
+mammal.fig <- egg::ggarrange(mammal.plot,  ncol = 1, nrow = 1, heights = c(2)) 
+
+ggsave("mammal.grey.png")
+
+
+mammal.fig
+
+```
+
+
+3. Herps
+
+```{r}
+
+DAT.grey.herpetofauna <- DAT.grey.z %>%
+  filter(fauna_cat == "herp") %>%
+  dplyr::select(action_cat, veg_cat) %>%
+  count(action_cat, veg_cat)
+
+DAT.grey.herpetofauna <- DAT.grey.herpetofauna %>%
+  arrange(desc(n))
+  
+DAT.grey.herpetofauna %>%
+  distinct(action_cat, veg_cat)
+```  
+
+
+```{r}
+
+DAT.grey.herpetofauna <- DAT.grey.herpetofauna %>%
+  
+  mutate(action_cat = factor(action_cat, levels = c("Admin/funding", "Habitat creation", "Predator/competitor control", "Mitigating harm from fire", "Monitoring/research/consultation/education", "Fire control activities", "Animal rescue", "Supplementary resources", "Logging/land clearing", "Prevent pollution", "Restrict public access", "Prevent poaching", "Post-fire env. rehab"))) %>%
+
+  mutate(veg_cat = factor(veg_cat, levels = c("Alpine", "Aquatic", "Rainforest", "Woodland", "Forest", "Most temperate\necosystems")))
+  
+
+DAT.grey.herpetofauna$action_cat = factor(DAT.grey.herpetofauna$action_cat, levels = rev(unique(DAT.grey.herpetofauna$action_cat)))
+
+DAT.grey.herpetofauna
+```
+
+
+```{r fig.height = 3, fig.width = 2.5}
+
+My_Theme = theme(
+  plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+  axis.title.y = element_text(size = 12, face = "bold"),
+  axis.text.y = element_text(size = 10, margin = unit(c(0.1, 0.1, 0.1, 0.2), "cm")),
+  axis.text.x = element_text(size = 10.5, vjust = 1, hjust = 1, margin = unit(c(0.15, 0.1, 0.1, 0.1), "cm"), angle = 55),
+  axis.title.x = element_text(size = 12, face = "bold", vjust = -0.6),
+  strip.text.x = element_text(size = 7),
+  strip.text.y = element_text(size = 11),
+  strip.text = element_text(size = 11),
+  strip.background = element_blank(),
+  panel.background = element_blank(),
+  strip.placement = "inside",
+  axis.ticks.length = unit(-0.07, "cm"),
+  axis.ticks = element_line(size = 0.8),
+  panel.grid.minor.x = element_blank(),
+  panel.grid.major.x = element_blank(),
+  panel.grid.minor.y = element_blank(),
+  panel.grid.major.y = element_blank(),
+  legend.position = c(0.15, 0.75),
+  legend.title = element_text(size = 9, hjust = 0.6, face = "bold"),
+  legend.text = element_text(size = 9),
+  legend.key.width = unit(0.3, "cm"),
+  legend.key.height = unit(0.5, "cm"),
+  legend.background = element_blank(),
+  plot.margin = unit(c(5, 5, 5, 5), "pt"))
+
+herp.plot <- ggplot(data = DAT.grey.herpetofauna, aes(x = action_cat, fill = action_cat)) +
+  
+  My_Theme +
+  
+  geom_col(aes(y = n, fill = veg_cat),
+             position = "stack") +
+  
+    scale_fill_brewer(palette = "Spectral") +
+  
+  
+   scale_y_continuous(breaks = seq(0, 12, by = 2)) +
+  
+  coord_cartesian(ylim = c(0,12)) +
+  
+  labs(x = "Action type", y = "n mentions", title = "Herpetofauna", fill = "Ecosystem type")# +
+
+
+
+herp.plot
+```
+
+
+
+```{r fig.height = 3, fig.width = 2.25}
+
+herpetofauna.fig <- egg::ggarrange(herp.plot,  ncol = 1, nrow = 1, heights = c(2)) 
+
+ggsave("herpetofauna.grey.png")
+
+
+herpetofauna.fig
+
+```
+
+
+4. Fish
+
+```{r}
+
+DAT.grey.fish <- DAT.grey.z %>%
+  filter(fauna_cat == "fish") %>%
+  dplyr::select(action_cat) %>%
+  count(action_cat)
+
+DAT.grey.fish <- DAT.grey.fish %>%
+  arrange(desc(n)) 
+  
+DAT.grey.fish %>%
+  distinct(action_cat)
+```  
+
+
+```{r}
+
+DAT.grey.fish <- DAT.grey.fish %>%
+  
+  mutate(action_cat = factor(action_cat, levels = c("Admin/funding", "Habitat creation", "Predator/competitor control", "Mitigating harm from fire", "Monitoring/research/consultation/education", "Fire control activities", "Animal rescue", "Supplementary resources", "Logging/land clearing", "Prevent pollution", "Prevent poaching", "Post-fire env. rehab"))) 
+  
+
+DAT.grey.fish$action_cat = factor(DAT.grey.fish$action_cat, levels = rev(unique(DAT.grey.fish$action_cat)))
+
+DAT.grey.fish
+```
+
+
+```{r fig.height = 3, fig.width = 2}
+
+My_Theme = theme(
+  plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+  axis.title.y = element_text(size = 12, face = "bold"),
+  axis.text.y = element_text(size = 10, margin = unit(c(0.1, 0.1, 0.1, 0.2), "cm")),
+  axis.text.x = element_text(size = 10.5, vjust = 1, hjust = 1, margin = unit(c(0.15, 0.1, 0.1, 0.1), "cm"), angle = 55),
+  axis.title.x = element_text(size = 12, face = "bold", vjust = -0.6),
+  strip.text.x = element_text(size = 7),
+  strip.text.y = element_text(size = 11),
+  strip.text = element_text(size = 11),
+  strip.background = element_blank(),
+  panel.background = element_blank(),
+  strip.placement = "inside",
+  axis.ticks.length = unit(-0.07, "cm"),
+  axis.ticks = element_line(size = 0.8),
+  panel.grid.minor.x = element_blank(),
+  panel.grid.major.x = element_blank(),
+  panel.grid.minor.y = element_blank(),
+  panel.grid.major.y = element_blank(),
+  legend.position = "none",
+  legend.title = element_text(size = 9, hjust = 0.6, face = "bold"),
+  legend.text = element_text(size = 9),
+  legend.key.width = unit(0.3, "cm"),
+  legend.key.height = unit(0.5, "cm"),
+  legend.background = element_blank(),
+  plot.margin = unit(c(5, 5, 5, 5), "pt"))
+
+fish.plot <- ggplot(data = DAT.grey.fish, aes(x = action_cat)) +
+  
+  My_Theme +
+  
+  geom_col(aes(y = n),
+             position = "stack") +
+  
+  
+   scale_y_continuous(breaks = seq(0, 5, by = 1)) +
+  
+  coord_cartesian(ylim = c(0,5)) +
+  
+  labs(x = "Action type", y = "n mentions", title = "Fish")# +
+
+
+
+fish.plot
+
+```
+
+
+
+```{r fig.height = 3, fig.width = 2}
+
+fish.fig <- egg::ggarrange(fish.plot,  ncol = 1, nrow = 1, heights = c(2)) 
+
+ggsave("fish.grey.png")
+
+
+fish.fig
+
+```
+
+
+5. Inverts
+
+```{r}
+
+DAT.grey.invert <- DAT.grey.z %>%
+  filter(fauna_cat == "invert") %>%
+  dplyr::select(action_cat, veg_cat) %>%
+  count(action_cat, veg_cat)
+
+DAT.grey.invert <- DAT.grey.invert %>%
+  arrange(desc(n)) 
+  
+DAT.grey.invert %>%
+  distinct(action_cat, veg_cat)
+```  
+
+
+```{r}
+
+DAT.grey.invert <- DAT.grey.invert %>%
+  
+  mutate(action_cat = factor(action_cat, levels = c("Admin/funding", "Habitat creation", "Predator/competitor control", "Mitigating harm from fire", "Monitoring/research/consultation/education", "Fire control activities", "Animal rescue", "Supplementary resources", "Logging/land clearing", "Prevent pollution"))) %>%
+
+  mutate(veg_cat = factor(veg_cat, levels = c("Alpine", "Aquatic", "Woodland", "Rainforest", "Forest", "Most temperate\necosystems")))
+  
+
+DAT.grey.invert$action_cat = factor(DAT.grey.invert$action_cat, levels = rev(unique(DAT.grey.invert$action_cat)))
+
+DAT.grey.invert
+```
+
+
+```{r fig.height = 3, fig.width = 1.5}
+
+My_Theme = theme(
+  plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+  axis.title.y = element_text(size = 12, face = "bold"),
+  axis.text.y = element_text(size = 10, margin = unit(c(0.1, 0.1, 0.1, 0.2), "cm")),
+  axis.text.x = element_text(size = 10.5, vjust = 1, hjust = 1, margin = unit(c(0.15, 0.1, 0.1, 0.1), "cm"), angle = 70),
+  axis.title.x = element_text(size = 12, face = "bold", vjust = -0.6),
+  strip.text.x = element_text(size = 7),
+  strip.text.y = element_text(size = 11),
+  strip.text = element_text(size = 11),
+  strip.background = element_blank(),
+  panel.background = element_blank(),
+  strip.placement = "inside",
+  axis.ticks.length = unit(-0.07, "cm"),
+  axis.ticks = element_line(size = 0.8),
+  panel.grid.minor.x = element_blank(),
+  panel.grid.major.x = element_blank(),
+  panel.grid.minor.y = element_blank(),
+  panel.grid.major.y = element_blank(),
+  legend.position = c(0.25, 0.70),
+  legend.title = element_text(size = 9, hjust = 0.6, face = "bold"),
+  legend.text = element_text(size = 9),
+  legend.key.width = unit(0.3, "cm"),
+  legend.key.height = unit(0.5, "cm"),
+  legend.background = element_blank(),
+  plot.margin = unit(c(5, 5, 5, 5), "pt"))
+
+invert.plot <- ggplot(data = DAT.grey.invert, aes(x = action_cat, fill = action_cat)) +
+  
+  My_Theme +
+  
+  geom_col(aes(y = n, fill = veg_cat),
+             position = "stack") +
+  
+    scale_fill_brewer(palette = "Spectral") +
+  
+  
+   scale_y_continuous(breaks = seq(0, 12, by = 2)) +
+  
+  coord_cartesian(ylim = c(0,12)) +
+  
+  labs(x = "Action type", y = "n mentions", title = "Invertebrates", fill = "Ecosystem type")# +
+
+
+
+invert.plot
+```
+
+
+
+```{r fig.height = 3, fig.width = 1.5}
+library(egg)
+invert.fig <- egg::ggarrange(invert.plot,  ncol = 1, nrow = 1, heights = c(2)) 
+
+ggsave("invert.grey.png")
+
+
+invert.fig
+
+```
+
+
+6. Taxa not specified
+
+```{r}
+
+DAT.grey.any <- DAT.grey.z %>%
+  filter(fauna_cat == "any") %>%
+  dplyr::select(action_cat, veg_cat) %>%
+  count(action_cat, veg_cat)
+
+DAT.grey.any <- DAT.grey.any %>%
+  arrange(desc(n)) 
+  
+DAT.grey.any %>%
+  distinct(action_cat, veg_cat)
+```  
+
+
+```{r}
+
+DAT.grey.any <- DAT.grey.any %>%
+  
+  mutate(action_cat = factor(action_cat, levels = c("Admin/funding", "Habitat creation", "Predator/competitor control", "Mitigating harm from fire", "Monitoring/research/consultation/education", "Fire control activities", "Animal rescue", "Supplementary resources", "Logging/land clearing", "Prevent pollution", "Restrict public access", "Post-fire env. rehab"))) %>%
+
+  mutate(veg_cat = factor(veg_cat, levels = c("Alpine", "Aquatic", "Woodland", "Not specified", "Rainforest", "Grassland", "Semi-arid", "Forest", "Most temperate\necosystems")))
+  
+
+DAT.grey.any$action_cat = factor(DAT.grey.any$action_cat, levels = rev(unique(DAT.grey.any$action_cat)))
+
+DAT.grey.any
+```
+
+
+```{r fig.height = 3, fig.width = 2.5}
+
+My_Theme = theme(
+  plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+  axis.title.y = element_text(size = 12, face = "bold"),
+  axis.text.y = element_text(size = 10, margin = unit(c(0.1, 0.1, 0.1, 0.2), "cm")),
+  axis.text.x = element_text(size = 10.5, vjust = 1, hjust = 1, margin = unit(c(0.15, 0.1, 0.1, 0.1), "cm"), angle = 65),
+  axis.title.x = element_text(size = 12, face = "bold", vjust = -0.6),
+  strip.text.x = element_text(size = 7),
+  strip.text.y = element_text(size = 11),
+  strip.text = element_text(size = 11),
+  strip.background = element_blank(),
+  panel.background = element_blank(),
+  strip.placement = "inside",
+  axis.ticks.length = unit(-0.07, "cm"),
+  axis.ticks = element_line(size = 0.8),
+  panel.grid.minor.x = element_blank(),
+  panel.grid.major.x = element_blank(),
+  panel.grid.minor.y = element_blank(),
+  panel.grid.major.y = element_blank(),
+  legend.position = c(0.15, 0.61),
+  legend.title = element_text(size = 9, hjust = 0.6, face = "bold"),
+  legend.text = element_text(size = 9),
+  legend.key.width = unit(0.3, "cm"),
+  legend.key.height = unit(0.5, "cm"),
+  legend.background = element_blank(),
+  plot.margin = unit(c(5, 5, 5, 5), "pt"))
+
+any.plot <- ggplot(data = DAT.grey.any, aes(x = action_cat, fill = action_cat)) +
+  
+  My_Theme +
+  
+  geom_col(aes(y = n, fill = veg_cat),
+             position = "stack") +
+  
+    scale_fill_brewer(palette = "Spectral") +
+  
+  
+   scale_y_continuous(breaks = seq(0, 20, by = 2)) +
+  
+  coord_cartesian(ylim = c(0,20)) +
+  
+  labs(x = "Action type", y = "n mentions", title = "Taxa not specified", fill = "Ecosystem type")
+
+
+
+any.plot
+```
+
+
+```{r fig.height = 3, fig.width = 2.25}
+
+any.fig <- egg::ggarrange(any.plot,  ncol = 1, nrow = 1, heights = c(2)) 
+
+ggsave("any.grey.png")
+
+
+any.fig
+
+```
+
+
+#### Maps - these save to disk, and wont display here
+
+```{r}
+
+DAT.map.1 <- DAT.grey.z %>%
+  dplyr::select(state) %>%
+  count(state)
+
+DAT.map.1
+```
+
+```{r}
+ddf1 = read.table(text="
+state value
+'Australian Capital Territory'	29			
+'New South Wales'	60			
+'Northern Territory'	1			
+'Queensland'	41		
+'South Australia'	36			
+'Tasmania'	13			
+'Victoria'	23			
+'Western Australia'	27
+", header=T)
+```
+
+```{r}
+library(raster)
+library(rworldmap)
+library(classInt)
+
+## 1 Get map of provinces (level 1 admin regions)
+AusLevel1 <- raster::getData("GADM", country = "Australia", level = 1)
+
+## 2 join your [data] onto the map by specifying the join column in each
+## this will report on any mis-matches between province names
+png("map1.grey.png",width=30,height=20, units="cm", res = 300)
+AusLevel1 <- joinData2Map(ddf1,nameMap="AusLevel1",nameJoinIDMap="NAME_1",nameJoinColumnData="state")
+
+
+classInt <- classInt::classIntervals( AusLevel1[["value"]], style="pretty")
+catMethod = classInt[["brks"]]
+#getting a colour scheme from the RColorBrewer package
+colourPalette <- RColorBrewer::brewer.pal(7, 'Spectral')
+#calling mapCountryData with the parameters from classInt and RColorBrewer
+mapParams <- mapCountryData( AusLevel1
+ , nameColumnToPlot="value"
+ , addLegend=FALSE
+ , catMethod = catMethod
+ , borderCol = "grey35"
+ , mapTitle = ""
+ , colourPalette = colourPalette )
+do.call( addMapLegend
+ , c( mapParams
+ , legendLabels="all"
+ , legendWidth=0.5
+ , labelFontSize = 1.4
+ , legendArgs = mtext("Total number of actions mentioned", side = 1, line = 1, cex = 1.4)
+ , legendIntervals="data"
+ , legendMar = 7 ) )
+
+
+```
+
+

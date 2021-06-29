@@ -1,0 +1,277 @@
+---
+title: "screening"
+author: "E. Bendall"
+date: "24/02/2021"
+output: html_document
+---
+
+```{r setup, include=TRUE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width=8, fig.height=6)
+
+
+library(tidyverse)
+library(ggplot2)
+library(here)
+library(cli)
+library(devtools)
+library(revtools)
+library(tidybayes)
+library(readxl)
+library(openxlsx)
+#devtools::install_github("MathiasHarrer/dmetar")
+
+
+# Calculate standard page sizes
+pagesize <- function(size = c("A4", "A3", "A2", "A1", "A0"), 
+                     orientation = c("portrait", "landscape"),
+                     units = c("cm", "mm")) {
+  
+  size <- match.arg(size)
+  orientation <- match.arg(orientation)
+  units <- match.arg(units)
+  
+  alpha <- 1000 * 2^(1/4)
+  i <- as.integer(substr(size, 2, 2))
+  long <- alpha * 2^(-i/2)
+  
+  page <- switch(
+    orientation,
+    portrait = c(width = long / sqrt(2), height = long),
+    landscape = c(width = long, height = long / sqrt(2))
+  )
+  
+  page <- round(page)
+  if (units == "cm") page <- page / 10
+  
+  page <- c(as.list(page), units = units)
+  class(page) <- "pagesize"
+  
+  page
+}
+
+
+
+# Save a graph to a PDF file
+gg_pdf <- function(plot, filename, size = pagesize("A4", "landscape", "cm")) {
+  
+  if (!inherits(size, "pagesize")) stop("The size argument should be a pagesize (list) object")
+  
+  ggsave(
+    filename, 
+    plot, 
+    width = size$width,
+    height = size$height,
+    units = size$units)
+}
+
+```
+
+```{r}
+## load in files
+
+data.bib <- read_bibliography(c("savedrecs (60).bib", "savedrecs (61).bib", "savedrecs (62).bib", "savedrecs (63).bib", "scopus (4).bib", "scopus (5).bib", "ProquestDocuments-2020-09-29 (1).ris"))
+
+```
+
+
+```{r}
+# locate duplicates R method
+matches <- revtools::find_duplicates(data.bib, match_variable = "title",
+                                               match_function = "fuzzdist",
+                                               to_lower = TRUE)
+
+# remove duplicates
+data_unique <- extract_unique_references(data.bib, matches)
+```
+
+```{r}
+# screen duplicates not picked up by method in previous step
+
+result.1 <- screen_duplicates(data_unique)
+
+save(result.1, file = "result.1.Rdata")
+
+```
+The screening identified 876 title matches, which were removed
+
+```{r}
+## screen titles manually
+
+## NOTE: when exiting the app, the result is saved with the same number of rows as the original. A new column is added with "excluded' tag
+result.2 <- screen_titles(result.1.tmp)
+
+save(result.2, file = "result.2.Rdata")
+
+## 
+```
+```{r}
+result.2.filtered <- result.2 %>%
+  filter(screened_titles == "selected")
+
+save(result.2.filtered, file = "result.2.filtered.Rdata")
+```
+
+
+```{r}
+## screen titles manually
+
+## NOTE: when exiting the app, the result is saved with the same number of rows as the original. A new column is added with "excluded' tag
+#result.3 <- screen_abstracts(result.2.filtered)
+
+result.3 <- screen_abstracts(result.2.filtered)
+
+save(result.3, file = "result.3.Rdata")
+
+```
+
+```{r}
+result.3.filtered <- result.3 %>%
+  filter(screened_abstracts == "selected")
+
+save(result.3.filtered, file = "result.3.filtered.Rdata")
+```
+
+```{r}
+# screen duplicates not picked up by method in previous step
+
+result.3.filtered.dup <- screen_duplicates(result.3.filtered)
+
+save(result.3.filtered.dup, file = "result.3.filtered.dup.Rdata")
+
+
+```
+
+
+```{r}
+### visualise accepted articles
+
+accepted_articles <- result.3.filtered.dup 
+  
+screen_topics(accepted_articles)
+
+write.xlsx(accepted_articles, 'accepted_articles_021020.xlsx')
+
+
+```
+
+
+```{r}
+### create DOI search string for use in databases to extract EndNote data to be used in full article screening
+DOI.string.tmp <- accepted_articles %>%
+  select(doi) %>%
+  drop_na()
+
+## remove URLs from DOI strings  
+    
+library(stringr)  
+url_regex <- "http://dx.doi.org/"
+  
+DOI.string.tmp2 <- DOI.string.tmp %>%
+  str_remove_all(url_regex)
+
+DOI.string.tmp2
+  
+write.csv(DOI.string.tmp2,"DOI.csv")
+
+## read back in CSV because need to keep CSV formatting
+
+DOI.string.tmp3 <- read.csv("./DOI.csv", stringsAsFactors = FALSE)
+
+## remove unneccessary columns
+
+DOI.string.tmp4 <- DOI.string.tmp3 %>%
+  select(-(X))
+
+DOI.string.tmp4
+
+## create string
+
+DOI.string.tmp5 <- paste(DOI.string.tmp4, collapse=",")
+
+## save as text
+
+save(DOI.string.tmp5, file = "DOI.string.txt")
+
+DOI.string <- file("DOI.string.txt")
+writeLines(DOI.string.tmp5, DOI.string)
+
+## NOTE: 1. remove leading and trailing characters surrounding DOI search string before use
+
+## 2. For WOS - string works as is
+
+## 3. For Scopus - replace ',' with OR
+
+```
+
+```{r}
+### create title search string for use in databases to extract EndNote data to be used in full article screening (for articles missing DOIs)
+title.string.tmp <- accepted_articles %>%
+  filter(is.na(doi)) 
+
+## remove URLs from DOI strings  
+    
+library(stringr)  
+url_regex <- "http://dx.doi.org/"
+```
+
+
+```{r}
+DOI.string.tmp2 <- DOI.string.tmp %>%
+  str_remove_all(url_regex)
+
+DOI.string.tmp2
+  
+write.csv(DOI.string.tmp2,"DOI.csv")
+
+## read back in CSV because need to keep CSV formatting
+
+DOI.string.tmp3 <- read.csv("./DOI.csv", stringsAsFactors = FALSE)
+
+## remove unneccessary columns
+
+DOI.string.tmp4 <- DOI.string.tmp3 %>%
+  select(-(X))
+
+DOI.string.tmp4
+
+## create string
+
+DOI.string.tmp5 <- paste(DOI.string.tmp4, collapse=",")
+
+## save as text
+
+save(DOI.string.tmp5, file = "DOI.string.txt")
+
+DOI.string <- file("DOI.string.txt")
+writeLines(DOI.string.tmp5, DOI.string)
+
+## NOTE: 1. remove leading and trailing characters surrounding DOI search string before use
+
+## 2. For WOS - string works as is
+
+## 3. For Scopus - replace ',' with OR
+
+```
+
+
+
+
+```{r}
+### remove duplicates from DOI results
+
+endnote.bib <- read_bibliography(c("scopus (1).ris", "savedrecs (2).ciw"))
+```
+```{r}
+# locate duplicates R method
+matches <- revtools::find_duplicates(endnote.bib, match_variable = "title",
+                                               match_function = "fuzzdist",
+                                               to_lower = TRUE)
+
+# remove duplicates
+data_unique <- extract_unique_references(endnote.bib, matches)
+```
+
+```{r}
+endnote.bib <- write_bibliography(accepted_articles, filename = "endnote.ris", format = "ris")
+```
+

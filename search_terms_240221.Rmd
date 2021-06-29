@@ -1,0 +1,320 @@
+---
+title: "search_terms"
+author: "E. Bendall"
+date: "24/02/2021"
+output: word_document
+---
+
+```{r setup, include=TRUE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.width=8, fig.height=6)
+
+library(tidyverse)
+library(ggplot2)
+library(here)
+library(cli)
+library(devtools)
+library(revtools)
+library(dmetar)
+library(tidybayes)
+library(readxl)
+library(metaverse)
+#devtools::install_github("elizagrames/litsearchr")
+#devtools::install_github("MathiasHarrer/dmetar")
+#remotes::install_github("rmetaverse/metaverse")
+
+
+# Make sure the scales package is available (it should be if ggplot is installed)
+requireNamespace("scales")
+
+# Default graph theme - white background
+theme_set( theme_bw() )
+
+set.seed(42)
+
+
+###### Some helper functions #####
+
+# Calculate standard page sizes
+pagesize <- function(size = c("A4", "A3", "A2", "A1", "A0"), 
+                     orientation = c("portrait", "landscape"),
+                     units = c("cm", "mm")) {
+  
+  size <- match.arg(size)
+  orientation <- match.arg(orientation)
+  units <- match.arg(units)
+  
+  alpha <- 1000 * 2^(1/4)
+  i <- as.integer(substr(size, 2, 2))
+  long <- alpha * 2^(-i/2)
+  
+  page <- switch(
+    orientation,
+    portrait = c(width = long / sqrt(2), height = long),
+    landscape = c(width = long, height = long / sqrt(2))
+  )
+  
+  page <- round(page)
+  if (units == "cm") page <- page / 10
+  
+  page <- c(as.list(page), units = units)
+  class(page) <- "pagesize"
+  
+  page
+}
+
+# Save a graph to a PDF file
+gg_pdf <- function(plot, filename, size = pagesize("A4", "landscape", "cm")) {
+  
+  if (!inherits(size, "pagesize")) stop("The size argument should be a pagesize (list) object")
+  
+  ggsave(
+    filename, 
+    plot, 
+    width = size$width,
+    height = size$height,
+    units = size$units)
+}
+
+```
+
+First we will use the litsearchr package to build the boolean search string to be used to search databases.
+
+
+The first step involves using 'naive' search terms that are used to find a broad selection of matches in a large database, e.g. Web of Science & Scopus
+
+```{r}
+## naive search string: 
+
+# (("post-fire" OR fire* OR "post fire" OR "postfire" OR burn*) AND (manag* OR strategi* OR restor* OR action* OR practice* OR salvage) AND (fauna OR animal* OR wildlife OR bird* OR mammal* OR reptil* OR amphibian* OR verterbrate* OR invertebrate*)))
+
+search_directory <- here("naive_results")
+
+naiveimport <- litsearchr::import_results(directory = search_directory, verbose = TRUE)
+
+# remove duplicates
+naiveresults <- litsearchr::remove_duplicates(naiveimport, field = "title", method = "string_osa")
+
+```
+
+```{r}
+## proposed naive search string: 
+
+# We repeated this process with a revised version of the naive search string, for consistency with PECO method. The resulting keyword matrices were combined and duplicates removed.
+
+search_directory <- here("naive_results2")
+
+naiveimport2 <- litsearchr::import_results(directory = search_directory, verbose = TRUE)
+
+# remove duplicates
+naiveresults2 <- litsearchr::remove_duplicates(naiveimport2, field = "title", method = "string_osa")
+
+```
+
+## for first seacrh string
+```{r}
+## extract keywords from titles and abstracts
+rakedkeywords <-
+  litsearchr::extract_terms(
+    text = paste(naiveresults$title, naiveresults$abstract),
+    method = "fakerake",
+    min_freq = 2,
+    ngrams = TRUE,
+    min_n = 2,
+    language = "English"
+  )
+```
+
+```{r}
+## build co-occurence network from keyword list
+
+naivedfm <-
+  litsearchr::create_dfm(
+    elements = paste(naiveresults$title, naiveresults$abstract),
+    features = rakedkeywords
+  )
+
+naivegraph <-
+  litsearchr::create_network(
+    search_dfm = as.matrix(naivedfm),
+    min_studies = 3,
+    min_occ = 2
+  )
+```
+
+```{r}
+## identify keywords
+
+cutoff <-
+  litsearchr::find_cutoff(
+    naivegraph,
+    method = "cumulative",
+    percent = .80, # This parameter can be tweaked, but increasing it to the suggested .80 results in too many keywords to manually categorise in the next step
+    imp_method = "strength"
+  )
+
+reducedgraph <-
+  litsearchr::reduce_graph(naivegraph, cutoff_strength = cutoff[1])
+
+searchterms <- litsearchr::get_keywords(reducedgraph)
+
+write.csv(searchterms, "./search_terms_fauna_280920.csv")
+## view first 20 keywords
+head(searchterms, 20)
+```
+
+### repeat for second version of string
+```{r}
+## extract keywords from titles and abstracts
+rakedkeywords2 <-
+  litsearchr::extract_terms(
+    text = paste(naiveresults2$title, naiveresults2$abstract),
+    method = "fakerake",
+    min_freq = 2,
+    ngrams = TRUE,
+    min_n = 2,
+    language = "English"
+  )
+```
+
+```{r}
+## build co-occurence network from keyword list
+
+naivedfm2 <-
+  litsearchr::create_dfm(
+    elements = paste(naiveresults2$title, naiveresults2$abstract),
+    features = rakedkeywords2
+  )
+
+naivegraph2 <-
+  litsearchr::create_network(
+    search_dfm = as.matrix(naivedfm2),
+    min_studies = 3,
+    min_occ = 2
+  )
+```
+
+```{r}
+## identify keywords
+
+cutoff2 <-
+  litsearchr::find_cutoff(
+    naivegraph2,
+    method = "cumulative",
+    percent = .80, # This parameter can be tweaked, but increasing it to the suggested .80 results in too many keywords to manually categorise in the next step
+    imp_method = "strength"
+  )
+
+reducedgraph2 <-
+  litsearchr::reduce_graph(naivegraph2, cutoff_strength = cutoff2[1])
+
+searchterms2 <- litsearchr::get_keywords(reducedgraph2)
+
+write.csv(searchterms2, "./search_terms_fauna_alt_280920.csv")
+## view first 20 keywords
+head(searchterms2, 20)
+```
+
+
+
+```{r}
+
+# manually group terms and remove irrelevant terms in the csv
+
+grouped_terms <- read.csv("./search_terms_fauna_combined_grouped_290920.csv")
+
+## remove columns not needed
+
+grouped_terms <- grouped_terms %>%
+  select(-(X))
+
+### add any other terms manually into the list at this step
+
+extra_terms <- read.csv("./manual_search_terms_250920.csv")
+
+# join together a list of manually generated woodpecker terms with the ones from the csv
+
+all_search_terms <- rbind(grouped_terms, extra_terms)
+
+## remove duplicate rows
+
+all_search_terms <- all_search_terms %>%
+  distinct()
+
+## save back to .csv
+
+write.csv(all_search_terms, "./all_search_terms_280920.csv")
+
+## load back in .csv
+
+all_search_terms <- read.csv("./all_search_terms_280920.csv")
+
+## order alphabetical
+
+all_search_terms <- all_search_terms %>%
+  arrange(term) %>%
+    select(-(X))
+
+# extract the terms from the csv
+
+fire_terms <- all_search_terms$term[which(stringr::str_detect(all_search_terms$group, "fire"))]
+management_terms <- all_search_terms$term[which(stringr::str_detect(all_search_terms$group, "management"))]
+fauna_terms <- all_search_terms$term[which(stringr::str_detect(all_search_terms$group, "fauna"))]
+
+
+
+
+
+
+# then merge them into a list, using the code below as an example
+mysearchterms <- list(fire_terms, management_terms, fauna_terms)
+
+
+```
+
+```{r}
+# Create search string
+
+library(translate)
+
+my_search_wildcards <-
+  litsearchr::write_search(
+    groupdata = mysearchterms,
+    languages = "English",
+    stemming = TRUE,
+    closure = "full",
+    exactphrase = TRUE,
+    writesearch = FALSE,
+    verbose = TRUE
+  )
+
+# if copying straight from the console, remove all "\"
+
+my_search_wildcards
+```
+
+```{r}
+# Create search string
+
+library(translate)
+
+my_search_nowildcards <-
+  litsearchr::write_search(
+    groupdata = mysearchterms,
+    languages = "English",
+    stemming = FALSE,
+    closure = "full",
+    exactphrase = TRUE,
+    writesearch = FALSE,
+    verbose = TRUE
+  )
+
+# if copying straight from the console, remove all "\"
+
+my_search_nowildcards
+```
+
+
+
+The above search returns 1132 titles in Web of Science and 1309 in Scopus.
+
+This is vastly reduced from previous iterations that used fewer search terms.
